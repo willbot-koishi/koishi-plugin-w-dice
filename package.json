@@ -9,14 +9,21 @@
     "dist"
   ],
   "license": "MIT",
-  "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
     "plugin"
   ],
-  "devDependencies": {},
   "peerDependencies": {
     "koishi": "^4.17.9"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.12",
+    "echarts": "^5.5.1"
+  },
+  "koishi": {
+    "service": {
+      "required": [ "database", "canvas" ]
+    }
   }
 }
