@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-w-dice",
   "description": "WillBot dice function",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -12,18 +12,24 @@
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "dice",
+    "chart",
+    "visualization"
   ],
   "peerDependencies": {
-    "koishi": "^4.17.9"
+    "koishi": "^4.17.12"
   },
   "dependencies": {
-    "dayjs": "^1.11.12",
+    "dayjs": "^1.11.13",
     "echarts": "^5.5.1"
   },
   "koishi": {
     "service": {
-      "required": [ "database", "canvas" ]
+      "required": [
+        "database",
+		"canvas"
+      ]
     }
   }
 }
