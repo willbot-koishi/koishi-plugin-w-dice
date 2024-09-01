@@ -1,14 +1,13 @@
 import { Context, Schema, Session, h } from 'koishi'
 import {} from '@koishijs/plugin-help'
 import {} from '@koishijs/plugin-callme'
-import { skia } from 'koishi-plugin-skia-canvas'
+import {} from 'koishi-plugin-w-echarts'
 
 import dayjs from 'dayjs'
-import * as echarts from 'echarts'
 
 export const name = 'w-dice'
 
-export const inject = [ 'database', 'canvas' ]
+export const inject = [ 'database', 'echarts' ]
 
 export interface Config {}
 
@@ -54,30 +53,11 @@ export function apply(ctx: Context) {
         return user.nick || user.name
     }
 
-    function createChart(ctx: Context, width: number, height: number) {
-        const canvas = ctx.canvas.createCanvas(width, height)
-        const chart = echarts.init(canvas as any)
-        chart.setOption({
-            textStyle: {
-                fontFamily: ctx.canvas.getPresetFont()
-            }
-        })
-        return { chart, canvas }
-    }
-
     const colors = {
         primary: '#73b9bc',
         secondary: '#91ca8c',
         accent: '#f49f42'
     } as const
-
-    async function exportChartToImage(chart: echarts.ECharts, canvas: skia.Canvas) {
-        await new Promise<void>(res => {
-            chart.on('finished', () => res())
-            setTimeout(() => res(), 2000)
-        })
-        return h.image(canvas.toBuffer('image/png'), 'image/png')
-    }
 
     ctx.command('jrrp', '查看今日人品')
         .action(async ({ session }) => {
@@ -100,7 +80,7 @@ export function apply(ctx: Context) {
     })
 
     ctx.command('jrrp.top', '查看群内今日人品排行')
-        .option('max', '-m <max: number>', { fallback: 10 })
+        .option('max', '-m <max:number>', { fallback: 10 })
         .option('global', '-g', { hidden: true })
         .option('reverse', '-r')
         .option('chart', '-c', { fallback: true })
@@ -153,8 +133,7 @@ export function apply(ctx: Context) {
 
             top.reverse() // ECharts 图表顺序从下向上
 
-            const { chart, canvas } = createChart(ctx, 800, 500)
-            chart.setOption({
+            const eh = ctx.echarts.createChart(800, 500, {
                 xAxis: {
                     type: 'value',
                     name: '人品',
@@ -179,7 +158,7 @@ export function apply(ctx: Context) {
 
             return [
                 h.text(rankMsg),
-                await exportChartToImage(chart, canvas)
+                await eh.export()
             ]
         })
 
@@ -202,7 +181,7 @@ export function apply(ctx: Context) {
     ctx.command('jrrp.history', '查看我的人品历史')
         .option('chart', '-c', { fallback: true })
         .option('chart', '-C', { value: false })
-        .option('diff', '-d <target: user>')
+        .option('diff', '-d <target:user>')
         .action(async ({ session, options: { diff: diffTarget, chart: useChart } }) => {
             if (diffTarget && ! useChart) return 'diff 选项必须在图表模式下使用'
 
@@ -216,12 +195,12 @@ export function apply(ctx: Context) {
                 .map(({ day, rp }) => `${ dayjs(day).format('YYYY-MM-DD') }: ${rp}`)
                 .join('\n') || '你还没有历史人品'
 
-            const { chart, canvas } = createChart(ctx, 800, 500)
+            const eh = ctx.echarts.createChart(800, 500, {})
 
             const series = [ getJrrpSeries(selfRecs, colors.primary) ]
             if (diffTarget) series.push(getJrrpSeries(targetRecs, colors.secondary))
 
-            chart.setOption({
+            eh.chart.setOption({
                 xAxis: {
                     type: 'category',
                     data: [ ...new Set([
@@ -239,6 +218,6 @@ export function apply(ctx: Context) {
                 backgroundColor: '#fff'
             } satisfies echarts.EChartsOption)
 
-            return exportChartToImage(chart, canvas)
+            return eh.export()
         })
 }

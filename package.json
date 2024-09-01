@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-w-dice",
   "description": "WillBot dice function",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -28,8 +28,11 @@
     "service": {
       "required": [
         "database",
-		"canvas"
+        "echarts"
       ]
     }
+  },
+  "devDependencies": {
+    "koishi-plugin-w-echarts": "workspace:^"
   }
 }
