@@ -70,7 +70,7 @@ export function apply(ctx: Context) {
 
             if (rec) return `${name} 今天已经测过人品啦，是 ${rec.rp}，再怎么测都不会变的了啦……`
 
-            const rp = Math.floor(Math.random() * 100)
+            const rp = Math.floor(Math.random() * 101)
             await ctx.database.create('w-jrrp-record', { uid, day: today, rp })
             return `${name} 今天的人品是 ${rp}`
         })
@@ -80,11 +80,11 @@ export function apply(ctx: Context) {
     })
 
     ctx.command('jrrp.top', '查看群内今日人品排行')
-        .option('max', '-m <max:number>', { fallback: 10 })
-        .option('global', '-g', { hidden: true })
-        .option('reverse', '-r')
-        .option('chart', '-c', { fallback: true })
-        .option('chart', '-C', { value: false })
+        .option('max', '-m <max:number> 设置最大显示人数', { fallback: 10 })
+        .option('global', '-g 查看全局排行榜（所有群）', { hidden: true })
+        .option('reverse', '-r 逆序显示')
+        .option('chart', '-c 显示图表', { fallback: true })
+        .option('chart', '-C 不显示图表（文本形式）', { value: false })
         .alias('jrrp.bottom', { options: { reverse: true } })
         .action(async ({ session, options }) => {
             const { uid, guildId: gid } = session
@@ -179,9 +179,9 @@ export function apply(ctx: Context) {
     })
 
     ctx.command('jrrp.history', '查看我的人品历史')
-        .option('chart', '-c', { fallback: true })
-        .option('chart', '-C', { value: false })
-        .option('diff', '-d <target:user>')
+        .option('chart', '-c 显示图表', { fallback: true })
+        .option('chart', '-C 不显示图表（文本形式）', { value: false })
+        .option('diff', '-d <target:user> 指定比较的用户')
         .action(async ({ session, options: { diff: diffTarget, chart: useChart } }) => {
             if (diffTarget && ! useChart) return 'diff 选项必须在图表模式下使用'
 
