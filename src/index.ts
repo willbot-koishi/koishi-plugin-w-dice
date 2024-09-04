@@ -56,6 +56,7 @@ export function apply(ctx: Context) {
     const colors = {
         primary: '#73b9bc',
         secondary: '#91ca8c',
+        tertiary: '#d48265',
         accent: '#f49f42'
     } as const
 
@@ -81,7 +82,7 @@ export function apply(ctx: Context) {
 
     ctx.command('jrrp.top', '查看群内今日人品排行')
         .option('max', '-m <max:number> 设置最大显示人数', { fallback: 10 })
-        .option('global', '-g 查看全局排行榜（所有群）', { hidden: true })
+        .option('global', '-G 查看全局排行榜（所有群）', { hidden: true })
         .option('reverse', '-r 逆序显示')
         .option('chart', '-c 显示图表', { fallback: true })
         .option('chart', '-C 不显示图表（文本形式）', { value: false })
@@ -169,10 +170,12 @@ export function apply(ctx: Context) {
             day: dayjs(day).format('YYYY-MM-DD'),
             rp
         }))
+
+    type LineSeriesOption = echarts.RegisteredSeriesOption['line']
     
-    const getJrrpSeries = (recs: Awaited<ReturnType<typeof getJrrpRecs>>, color: string): echarts.SeriesOption => ({
+    const getJrrpSeries = (recs: Awaited<ReturnType<typeof getJrrpRecs>>, color: string): LineSeriesOption => ({
         type: 'line',
-        data: recs.map(({ day, rp }) => [ day, rp ] as const),
+        data: recs.map(({ day, rp }) => [ day, rp.toFixed(2) ] as const),
         label: { show: true },
         lineStyle: { color },
         itemStyle: { color }
@@ -182,7 +185,11 @@ export function apply(ctx: Context) {
         .option('chart', '-c 显示图表', { fallback: true })
         .option('chart', '-C 不显示图表（文本形式）', { value: false })
         .option('diff', '-d <target:user> 指定比较的用户')
-        .action(async ({ session, options: { diff: diffTarget, chart: useChart } }) => {
+        .option('average', '-a [window:posint] 显示均线，可指定窗口大小')
+        .action(async ({
+            session,
+            options: { diff: diffTarget, chart: useChart, average: averageWindowLength }
+        }) => {
             if (diffTarget && ! useChart) return 'diff 选项必须在图表模式下使用'
 
             const { uid } = session
@@ -197,8 +204,33 @@ export function apply(ctx: Context) {
 
             const eh = ctx.echarts.createChart(800, 500, {})
 
-            const series = [ getJrrpSeries(selfRecs, colors.primary) ]
+            const series: LineSeriesOption[] = [ getJrrpSeries(selfRecs, colors.primary) ]
             if (diffTarget) series.push(getJrrpSeries(targetRecs, colors.secondary))
+            if (averageWindowLength) {
+                const totalLength = selfRecs.length
+                if (averageWindowLength > totalLength) return `平均窗口长度不能超过数据总长度（${totalLength}）`
+
+                const averageRecs = []
+                const averageWindow = selfRecs.slice(0, averageWindowLength).map(it => it.rp)
+                let sum = averageWindow.reduce((a, c) => a + c, 0)
+                let i = averageWindowLength - 1
+                while (true) {
+                    const average = sum / averageWindowLength
+                    averageRecs.push({ day: selfRecs[i].day, rp: average })
+
+                    sum -= averageWindow.shift()
+                    if (i + 1 === selfRecs.length) break
+                    const next = selfRecs[++ i].rp
+                    sum += next
+                    averageWindow.push(next)
+                }
+
+                series.push({
+                    ...getJrrpSeries(averageRecs, colors.tertiary),
+                    smooth: true,
+                    label: { show: false }
+                })
+            }
 
             eh.chart.setOption({
                 xAxis: {
@@ -206,7 +238,7 @@ export function apply(ctx: Context) {
                     data: [ ...new Set([
                         ...selfRecs.map(rec => rec.day),
                         ...targetRecs?.map(rec => rec.day) ?? []
-                    ]) ]
+                    ]) ].sort((day1, day2) => + dayjs(day1) - + dayjs(day2))
                 },
                 yAxis: {
                     type: 'value',
