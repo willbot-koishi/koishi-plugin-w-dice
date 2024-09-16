@@ -97,7 +97,7 @@ export function apply(ctx: Context) {
 
             const today = + dayjs(new Date).startOf('day')
             const list = await ctx.database.get('w-jrrp-record', { day: today })
-            const top = (await Promise
+            const topAll = (await Promise
                 .all(list.map(async ({ uid, rp }) => {
                     const [ userPlatform, userId ] = uid.split(':')
                     if (! options.global &&
@@ -115,22 +115,20 @@ export function apply(ctx: Context) {
                     ? (rec1, rec2) => rec1.rp - rec2.rp
                     : (rec1, rec2) => rec2.rp - rec1.rp
                 )
-                .slice(0, options.max || undefined)
 
-            if (! top.length) return '今天还没有人测过人品哦'
-
+            if (! topAll.length) return '今天还没有人测过人品哦'
+            
+            const top = topAll.slice(0, options.max || undefined)
             const rank = top.findIndex(rec => rec.uid === uid) + 1
             const rankMsg = rank
-                ? `${name} 的今日人品排名是${options.reverse ? '倒数' : ''}第 ${rank}\n`
-                : `${name} 今天还没有测过人品\n`
+                ? `今日人品排名是${options.reverse ? '倒数' : ''}第 ${rank}`
+                : topAll.some(rec => rec.uid === uid)
+                    ? `今日人品未上榜`
+                    : `今日还没有测过人品`
 
-            if (! options.chart) return (
-                rankMsg +
-                `今日人品排行榜\n` +
-                top
-                    .map((rec, i) => `${rec.uid === uid ? '* ' : ''}${i + 1}. ${rec.name}: ${rec.rp}`)
-                    .join('\n')
-            )
+            if (! options.chart) return `${name} ${rankMsg}\n今日人品排行榜\n` + top
+                .map((rec, i) => `${rec.uid === uid ? '＊' : '　'} ${i + 1}. ${rec.name}: ${rec.rp}`)
+                .join('\n')
 
             top.reverse() // ECharts 图表顺序从下向上
 
