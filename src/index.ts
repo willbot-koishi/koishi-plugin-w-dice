@@ -81,7 +81,7 @@ export function apply(ctx: Context) {
     })
 
     ctx.command('jrrp.top', '查看群内今日人品排行')
-        .option('max', '-m <max:number> 设置最大显示人数', { fallback: 10 })
+        .option('max', '-m <max:number> 设置最大显示人数', { fallback: Infinity })
         .option('global', '-G 查看全局排行榜（所有群）', { hidden: true })
         .option('reverse', '-r 逆序显示')
         .option('chart', '-c 显示图表', { fallback: true })
@@ -173,7 +173,7 @@ export function apply(ctx: Context) {
     
     const getJrrpSeries = (recs: Awaited<ReturnType<typeof getJrrpRecs>>, color: string): LineSeriesOption => ({
         type: 'line',
-        data: recs.map(({ day, rp }) => [ day, rp.toFixed(2) ] as const),
+        data: recs.map(({ day, rp }) => [ day, String(rp) ] as const),
         label: { show: true },
         lineStyle: { color },
         itemStyle: { color }
