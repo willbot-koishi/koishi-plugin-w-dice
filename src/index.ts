@@ -1,4 +1,4 @@
-import { Context, Schema, Session, h } from 'koishi'
+import { $, Context, Schema, Session, h } from 'koishi'
 import {} from '@koishijs/plugin-help'
 import {} from '@koishijs/plugin-callme'
 import {} from 'koishi-plugin-w-echarts'
@@ -74,6 +74,17 @@ export function apply(ctx: Context) {
             const rp = Math.floor(Math.random() * 101)
             await ctx.database.create('w-jrrp-record', { uid, day: today, rp })
             return `${name} 今天的人品是 ${rp}`
+        })
+
+    ctx.command('jrrp.average', '查看我的人品均值')
+        .action(async ({ session }) => {
+            const { uid } = session
+            const name = getUsername(session)
+            const averageRp = await ctx.database
+                .select('w-jrrp-record')
+                .where({ uid })
+                .execute(row => $.avg(row.rp))
+            return `${name} 的平均人品是 ${averageRp.toFixed(2)}`
         })
 
     ctx.on('common/callme', (name, { uid }) => {
@@ -178,6 +189,52 @@ export function apply(ctx: Context) {
         lineStyle: { color },
         itemStyle: { color }
     })
+
+    ctx.command('jrrp.calendar', '查看我的人品日历')
+        .action(async ({ session }) => {
+            const { uid } = session
+            const data = (await ctx.database
+                .get('w-jrrp-record', {
+                    uid,
+                    day: { $gte: + dayjs().startOf('month') }
+                }))
+                .map(rec => [ dayjs(rec.day).format('YYYY-MM-DD'), rec.rp ])
+
+            const eh = ctx.echarts.createChart(420, 350, {
+                calendar: {
+                    orient: 'vertical',
+                    dayLabel: {
+                        nameMap: [ 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat' ],
+                        firstDay: 1
+                    },
+                    monthLabel: {
+                        nameMap: 'cn',
+                        margin: 20
+                    },
+                    cellSize: 40,
+                    range: dayjs().format('YYYY-MM')
+                },
+                visualMap: {
+                    min: 0,
+                    max: 100,
+                    calculable: true,
+                    show: false
+                },
+                series: {
+                    type: 'heatmap',
+                    silent: true,
+                    label: {
+                        show: true,
+                        formatter: ({ data }) => String(data[1])
+                    },
+                    coordinateSystem: 'calendar',
+                    data
+                },
+                backgroundColor: '#fff'
+            })
+
+            return eh.export()
+        })
 
     ctx.command('jrrp.history', '查看我的人品历史')
         .option('chart', '-c 显示图表', { fallback: true })
