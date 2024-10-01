@@ -4,6 +4,8 @@ import {} from '@koishijs/plugin-callme'
 import {} from 'koishi-plugin-w-echarts'
 
 import dayjs from 'dayjs'
+import dayjsCustomParseFormatPlugin from 'dayjs/plugin/customParseFormat'
+dayjs.extend(dayjsCustomParseFormatPlugin)
 
 export const name = 'w-dice'
 
@@ -190,29 +192,42 @@ export function apply(ctx: Context) {
         itemStyle: { color }
     })
 
-    ctx.command('jrrp.calendar', '查看我的人品日历')
-        .action(async ({ session }) => {
+    ctx.command('jrrp.calendar [month:string]', '查看我的人品日历')
+        .action(async ({ session }, month) => {
             const { uid } = session
+
+            const date = month ? dayjs(month, 'YYYY-MM', true) : dayjs()
+            if (! date.isValid()) return `${month} 不是合法的月份，月份格式应为 YYYY-MM`
+
             const data = (await ctx.database
                 .get('w-jrrp-record', {
                     uid,
-                    day: { $gte: + dayjs().startOf('month') }
+                    day: { $gte: + date.startOf('month'), $lte: + date.endOf('month') }
                 }))
                 .map(rec => [ dayjs(rec.day).format('YYYY-MM-DD'), rec.rp ])
 
-            const eh = ctx.echarts.createChart(420, 350, {
+            const eh = ctx.echarts.createChart(420, 320, {
                 calendar: {
                     orient: 'vertical',
-                    dayLabel: {
-                        nameMap: [ 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat' ],
-                        firstDay: 1
+                    yearLabel: {
+                        margin: 40,
+                        color: '#000',
+                        fontSize: 22,
+                        fontWeight: 800,
                     },
                     monthLabel: {
                         nameMap: 'cn',
-                        margin: 20
+                        margin: 20,
+                        fontSize: 20,
+                        fontWeight: 600
+                    },
+                    dayLabel: {
+                        nameMap: [ 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat' ],
+                        firstDay: 1,
+                        fontSize: 17
                     },
                     cellSize: 40,
-                    range: dayjs().format('YYYY-MM')
+                    range: date.format('YYYY-MM')
                 },
                 visualMap: {
                     min: 0,
