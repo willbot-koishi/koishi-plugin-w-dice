@@ -113,10 +113,10 @@ export function apply(ctx: Context) {
             const topAll = (await Promise
                 .all(list.map(async ({ uid, rp }) => {
                     const [ userPlatform, userId ] = uid.split(':')
-                    if (! options.global &&
-                        userPlatform !== session.event.platform &&
+                    if (! options.global && (
+                        userPlatform !== session.event.platform ||
                         ! members.some(member => member.user.id === userId)
-                    ) return null
+                    )) return null
                     const [ rec ] = await ctx.database.get('w-jrrp-name', { uid })
                     const name = rec?.name ?? uid
                     return {
