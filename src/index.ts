@@ -1,4 +1,4 @@
-import { $, Context, Schema, Session, h } from 'koishi'
+import { $, Context, Database, Schema, Session, h } from 'koishi'
 import {} from '@koishijs/plugin-help'
 import {} from '@koishijs/plugin-callme'
 import {} from 'koishi-plugin-w-echarts'
@@ -17,17 +17,26 @@ export const Config: Schema<Config> = Schema.object({})
 
 declare module 'koishi' {
     interface Tables {
-        'w-jrrp-record': JrrpRecord
+        'w-jrrp-record': JrrpRecord_v1
+        'w-jrrp-record-v2': JrrpRecord_v2
         'w-jrrp-name': JrrpName
     }
 }
 
-export interface JrrpRecord {
+export interface JrrpRecord_v1 {
     id: number
     uid: string
     day: number
     rp: number
 }
+
+export interface JrrpRecord_v2 {
+    uid: string
+    day: string
+    rp: number
+}
+
+export type JrrpRecord = JrrpRecord_v2
 
 export interface JrrpName {
     uid: string
@@ -43,6 +52,28 @@ export function apply(ctx: Context) {
     }, {
         autoInc: true
     })
+
+    ctx.model.extend('w-jrrp-record-v2', {
+        uid: 'string',
+        day: 'string',
+        rp: 'unsigned'
+    }, {
+        primary: [ 'uid', 'day' ]
+    })
+
+    // ctx.model.migrate('w-jrrp-record', {
+    //     uid: 'string',
+    //     day: 'unsigned'
+    // }, async database => {
+    //     ctx.logger.info('Migrating w-jrrp-record from v1 to v2...')
+    //     const recs = (await database.get('w-jrrp-record', {})).map<JrrpRecord_v2>(rec => ({
+    //         uid: rec.uid,
+    //         day: dayjs(rec.day).format('YYYY-MM-DD'),
+    //         rp: rec.rp
+    //     }))
+    //     await database.upsert('w-jrrp-record-v2', recs)
+    //     ctx.logger.info('Migrated w-jrrp-record from v1 to v2.')
+    // })
 
     ctx.model.extend('w-jrrp-name', {
         uid: 'string',
@@ -68,13 +99,13 @@ export function apply(ctx: Context) {
             const name = getUsername(session)
             ctx.database.upsert('w-jrrp-name', () => [ { uid, name } ])
 
-            const today = + dayjs(new Date).startOf('day')
-            const [ rec ] = await ctx.database.get('w-jrrp-record', { uid, day: today })
+            const today = dayjs().format('YYYY-MM-DD')
+            const [ rec ] = await ctx.database.get('w-jrrp-record-v2', { uid, day: today })
 
             if (rec) return `${name} 今天已经测过人品啦，是 ${rec.rp}，再怎么测都不会变的了啦……`
 
             const rp = Math.floor(Math.random() * 101)
-            await ctx.database.create('w-jrrp-record', { uid, day: today, rp })
+            await ctx.database.create('w-jrrp-record-v2', { uid, day: today, rp })
             return `${name} 今天的人品是 ${rp}`
         })
 
@@ -83,7 +114,7 @@ export function apply(ctx: Context) {
             const { uid } = session
             const name = getUsername(session)
             const averageRp = await ctx.database
-                .select('w-jrrp-record')
+                .select('w-jrrp-record-v2')
                 .where({ uid })
                 .execute(row => $.avg(row.rp))
             return `${name} 的平均人品是 ${averageRp.toFixed(2)}`
@@ -108,8 +139,8 @@ export function apply(ctx: Context) {
 
             const { data: members } = await session.bot.getGuildMemberList(gid)
 
-            const today = + dayjs(new Date).startOf('day')
-            const list = await ctx.database.get('w-jrrp-record', { day: today })
+            const today = dayjs().format('YYYY-MM-DD')
+            const list = await ctx.database.get('w-jrrp-record-v2', { day: today })
             const topAll = (await Promise
                 .all(list.map(async ({ uid, rp }) => {
                     const [ userPlatform, userId ] = uid.split(':')
@@ -175,12 +206,8 @@ export function apply(ctx: Context) {
         })
 
     const getJrrpRecs = async (uid: string) => (await ctx.database
-        .get('w-jrrp-record', { uid }))
-        .sort((rec1, rec2) => rec1.day - rec2.day)
-        .map(({ day, rp }) => ({
-            day: dayjs(day).format('YYYY-MM-DD'),
-            rp
-        }))
+        .get('w-jrrp-record-v2', { uid }))
+        .sort((rec1, rec2) => + dayjs(rec1.day) - + dayjs(rec2.day))
 
     type LineSeriesOption = echarts.RegisteredSeriesOption['line']
     
@@ -198,13 +225,14 @@ export function apply(ctx: Context) {
 
             const date = month ? dayjs(month, 'YYYY-MM', true) : dayjs()
             if (! date.isValid()) return `${month} 不是合法的月份，月份格式应为 YYYY-MM`
+            month = date.format('YYYY-MM')
 
             const data = (await ctx.database
-                .get('w-jrrp-record', {
+                .get('w-jrrp-record-v2', {
                     uid,
-                    day: { $gte: + date.startOf('month'), $lte: + date.endOf('month') }
+                    day: { $regex: `^${month}-` }
                 }))
-                .map(rec => [ dayjs(rec.day).format('YYYY-MM-DD'), rec.rp ])
+                .map(rec => [ rec.day, rec.rp ])
 
             const eh = ctx.echarts.createChart(420, 320, {
                 calendar: {
@@ -227,7 +255,7 @@ export function apply(ctx: Context) {
                         fontSize: 17
                     },
                     cellSize: 40,
-                    range: date.format('YYYY-MM')
+                    range: month
                 },
                 visualMap: {
                     min: 0,
