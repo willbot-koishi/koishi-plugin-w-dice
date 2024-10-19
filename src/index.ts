@@ -120,9 +120,11 @@ export function apply(ctx: Context) {
             return `${name} 的平均人品是 ${averageRp.toFixed(2)}`
         })
 
-    ctx.on('common/callme', (name, { uid }) => {
-        ctx.database.set('w-jrrp-name', { uid }, { name })
-    })
+    ctx.command('jrrp.callme <name:string>', '修改自己的称呼')
+        .action(async ({ session: { uid } }, name) => {
+            await ctx.database.set('w-jrrp-name', { uid }, { name })
+            return `好的，${name}，请多指教！`
+        })
 
     ctx.command('jrrp.top', '查看群内今日人品排行')
         .option('max', '-m <max:number> 设置最大显示人数', { fallback: Infinity })
