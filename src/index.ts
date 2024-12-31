@@ -1,4 +1,4 @@
-import { $, Context, Database, Schema, Session, h } from 'koishi'
+import { $, Context, Schema, Session, h } from 'koishi'
 import {} from '@koishijs/plugin-help'
 import {} from '@koishijs/plugin-callme'
 import {} from 'koishi-plugin-w-echarts'
@@ -165,7 +165,8 @@ export function apply(ctx: Context) {
             if (! topAll.length) return '今天还没有人测过人品哦'
             
             const top = topAll.slice(0, options.max || undefined)
-            const rank = top.findIndex(rec => rec.uid === uid) + 1
+            const { rp } = top.find(rec => rec.uid === uid)
+            const rank = top.findIndex(rec => rec.rp === rp) + 1
             const rankMsg = rank
                 ? `今日人品排名是${options.reverse ? '倒数' : ''}第 ${rank}`
                 : topAll.some(rec => rec.uid === uid)
