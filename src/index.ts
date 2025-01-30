@@ -1,4 +1,4 @@
-import { $, Context, Schema, Session, h } from 'koishi'
+import { $, Context, Schema as z, Session, h } from 'koishi'
 import {} from '@koishijs/plugin-help'
 import {} from '@koishijs/plugin-callme'
 import {} from 'koishi-plugin-w-echarts'
@@ -11,9 +11,31 @@ export const name = 'w-dice'
 
 export const inject = [ 'database', 'echarts' ]
 
-export interface Config {}
+export interface RpEvent {
+    on: {
+        year?: number
+        month?: number
+        date?: number
+    }
+    rp: number
+    reason: string
+}
 
-export const Config: Schema<Config> = Schema.object({})
+export interface Config {
+    rpEvents: RpEvent[]
+}
+
+export const Config: z<Config> = z.object({
+    rpEvents: z.array(z.object({
+        on: z.object({
+            year: z.number(),
+            month: z.number(),
+            date: z.number()
+        }).required(),
+        rp: z.number().required(),
+        reason: z.string().required()
+    }))
+})
 
 declare module 'koishi' {
     interface Tables {
@@ -43,7 +65,7 @@ export interface JrrpName {
     name: string
 }
 
-export function apply(ctx: Context) {
+export function apply(ctx: Context, config: Config) {
     ctx.model.extend('w-jrrp-record', {
         id: 'unsigned',
         uid: 'string',
@@ -60,20 +82,6 @@ export function apply(ctx: Context) {
     }, {
         primary: [ 'uid', 'day' ]
     })
-
-    // ctx.model.migrate('w-jrrp-record', {
-    //     uid: 'string',
-    //     day: 'unsigned'
-    // }, async database => {
-    //     ctx.logger.info('Migrating w-jrrp-record from v1 to v2...')
-    //     const recs = (await database.get('w-jrrp-record', {})).map<JrrpRecord_v2>(rec => ({
-    //         uid: rec.uid,
-    //         day: dayjs(rec.day).format('YYYY-MM-DD'),
-    //         rp: rec.rp
-    //     }))
-    //     await database.upsert('w-jrrp-record-v2', recs)
-    //     ctx.logger.info('Migrated w-jrrp-record from v1 to v2.')
-    // })
 
     ctx.model.extend('w-jrrp-name', {
         uid: 'string',
@@ -99,13 +107,28 @@ export function apply(ctx: Context) {
             const name = getUsername(session)
             ctx.database.upsert('w-jrrp-name', () => [ { uid, name } ])
 
-            const today = dayjs().format('YYYY-MM-DD')
-            const [ rec ] = await ctx.database.get('w-jrrp-record-v2', { uid, day: today })
+            const d = dayjs()
+            const day = d.format('YYYY-MM-DD')
+
+            console.log(day)
+
+            const rpEvent = config.rpEvents.find(({ on }) => {
+                if ('year' in on && on.year !== d.year()) return false
+                if ('month' in on && on.month !== d.month() + 1) return false
+                if ('date' in on && on.date !== d.date()) return false
+                return true
+            })
+            const [ rec ] = await ctx.database.get('w-jrrp-record-v2', { uid, day })
+
+            if (rpEvent) {
+                await ctx.database.upsert('w-jrrp-record-v2', [ { uid, day, rp: rpEvent.rp } ])
+                return `${name} 今天的人品是 ${rpEvent.rp}，因为${rpEvent.reason}`
+            }
 
             if (rec) return `${name} 今天已经测过人品啦，是 ${rec.rp}，再怎么测都不会变的了啦……`
 
             const rp = Math.floor(Math.random() * 101)
-            await ctx.database.create('w-jrrp-record-v2', { uid, day: today, rp })
+            await ctx.database.create('w-jrrp-record-v2', { uid, day, rp })
             return `${name} 今天的人品是 ${rp}`
         })
 
