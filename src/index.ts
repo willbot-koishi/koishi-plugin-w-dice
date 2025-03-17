@@ -90,8 +90,9 @@ export function apply(ctx: Context, config: Config) {
         primary: 'uid'
     })
 
-    function getUsername({ event: { user } }: Session) {
-        return user.nick || user.name
+    async function getUsername({ uid, event: { user } }: Session) {
+        const [ { name: customName } ] = await ctx.database.get('w-jrrp-name', uid)
+        return customName || user.nick || user.name
     }
 
     const colors = {
@@ -104,13 +105,14 @@ export function apply(ctx: Context, config: Config) {
     ctx.command('jrrp', '查看今日人品')
         .action(async ({ session }) => {
             const { uid } = session
-            const name = getUsername(session)
-            ctx.database.upsert('w-jrrp-name', () => [ { uid, name } ])
 
             const d = dayjs()
             const day = d.format('YYYY-MM-DD')
 
-            console.log(day)
+            const [ name, [ rec ] ] = await Promise.all([
+                getUsername(session),
+                ctx.database.get('w-jrrp-record-v2', { uid, day })
+            ])
 
             const rpEvent = config.rpEvents.find(({ on }) => {
                 if ('year' in on && on.year !== d.year()) return false
@@ -118,7 +120,6 @@ export function apply(ctx: Context, config: Config) {
                 if ('date' in on && on.date !== d.date()) return false
                 return true
             })
-            const [ rec ] = await ctx.database.get('w-jrrp-record-v2', { uid, day })
 
             if (rpEvent) {
                 await ctx.database.upsert('w-jrrp-record-v2', [ { uid, day, rp: rpEvent.rp } ])
@@ -135,11 +136,13 @@ export function apply(ctx: Context, config: Config) {
     ctx.command('jrrp.average', '查看我的人品均值')
         .action(async ({ session }) => {
             const { uid } = session
-            const name = getUsername(session)
-            const averageRp = await ctx.database
-                .select('w-jrrp-record-v2')
-                .where({ uid })
-                .execute(row => $.avg(row.rp))
+            const [ name, averageRp ] = await Promise.all([
+                getUsername(session),
+                ctx.database
+                    .select('w-jrrp-record-v2')
+                    .where({ uid })
+                    .execute(row => $.avg(row.rp))
+            ])
             return `${name} 的平均人品是 ${averageRp.toFixed(2)}`
         })
 
@@ -158,15 +161,18 @@ export function apply(ctx: Context, config: Config) {
         .alias('jrrp.bottom', { options: { reverse: true } })
         .action(async ({ session, options }) => {
             const { uid, guildId: gid } = session
-            const name = getUsername(session)
 
             if (! gid && ! options.global) return '请在群内调用'
 
-            const { data: members } = await session.bot.getGuildMemberList(gid)
-
             const today = dayjs().format('YYYY-MM-DD')
-            const list = await ctx.database.get('w-jrrp-record-v2', { day: today })
-            const topAll = (await Promise
+
+            const [ name, { data: members }, list ] = await Promise.all([
+                getUsername(session),
+                session.bot.getGuildMemberList(gid),
+                ctx.database.get('w-jrrp-record-v2', { day: today })
+            ])
+
+            const sortedList = (await Promise
                 .all(list.map(async ({ uid, rp }) => {
                     const [ userPlatform, userId ] = uid.split(':')
                     if (! options.global && (
@@ -185,22 +191,24 @@ export function apply(ctx: Context, config: Config) {
                     : (rec1, rec2) => rec2.rp - rec1.rp
                 )
 
-            if (! topAll.length) return '今天还没有人测过人品哦'
+            if (! sortedList.length) return `${name} 今天还没有人测过人品哦`
             
-            const top = topAll.slice(0, options.max || undefined)
-            const { rp } = top.find(rec => rec.uid === uid)
-            const rank = top.findIndex(rec => rec.rp === rp) + 1
-            const rankMsg = rank
+            const topList = sortedList.slice(0, options.max || undefined)
+
+            const rp = topList.find(rec => rec.uid === uid)?.rp ?? null
+            const rank = rp === null ? null : topList.findIndex(rec => rec.rp === rp) + 1
+            const rankMsg = `${name} ` + (rank !== null
                 ? `今日人品排名是${options.reverse ? '倒数' : ''}第 ${rank}`
-                : topAll.some(rec => rec.uid === uid)
+                : sortedList.some(rec => rec.uid === uid)
                     ? `今日人品未上榜`
                     : `今日还没有测过人品`
+            )
 
-            if (! options.chart) return `${name} ${rankMsg}\n今日人品排行榜\n` + top
+            if (! options.chart) return `${rankMsg}\n今日人品排行榜\n` + topList
                 .map((rec, i) => `${rec.uid === uid ? '＊' : '　'} ${i + 1}. ${rec.name}: ${rec.rp}`)
                 .join('\n')
 
-            top.reverse() // ECharts 图表顺序从下向上
+            topList.reverse() // ECharts 图表顺序从下向上
 
             const eh = ctx.echarts.createChart(800, 500, {
                 xAxis: {
@@ -212,11 +220,11 @@ export function apply(ctx: Context, config: Config) {
                 yAxis: {
                     type: 'category',
                     name: '用户',
-                    data: top.map(rec => rec.name)
+                    data: topList.map(rec => rec.name)
                 },
                 series: {
                     type: 'bar',
-                    data: top.map(rec => ({
+                    data: topList.map(rec => ({
                         value: rec.rp,
                         itemStyle: { color: rec.uid === uid ? colors.accent : colors.primary }
                     })),
@@ -253,12 +261,16 @@ export function apply(ctx: Context, config: Config) {
             if (! date.isValid()) return `${month} 不是合法的月份，月份格式应为 YYYY-MM`
             month = date.format('YYYY-MM')
 
-            const data = (await ctx.database
+            const [ name, data ] = await Promise.all([
+                getUsername(session),
+                ctx.database
                 .get('w-jrrp-record-v2', {
                     uid,
                     day: { $regex: `^${month}-` }
-                }))
-                .map(rec => [ rec.day, rec.rp ])
+                }).then(recs => recs
+                    .map(rec => [ rec.day, rec.rp ])
+                )
+            ])
 
             const eh = ctx.echarts.createChart(420, 320, {
                 calendar: {
@@ -302,7 +314,10 @@ export function apply(ctx: Context, config: Config) {
                 backgroundColor: '#fff'
             })
 
-            return eh.export()
+            return [
+                `${name} 在 ${month} 的人品日历`,
+                await eh.export()
+            ]
         })
 
     ctx.command('jrrp.history', '查看我的人品历史')
