@@ -1,6 +1,5 @@
-import { $, Context, Schema as z, Session, h } from 'koishi'
+import { $, Context, Schema as z, Session, h, Tables, Keys, Query, Indexable, Awaitable, Create } from 'koishi'
 import {} from '@koishijs/plugin-help'
-import {} from '@koishijs/plugin-callme'
 import {} from 'koishi-plugin-w-echarts'
 
 import dayjs from 'dayjs'
@@ -90,9 +89,127 @@ export function apply(ctx: Context, config: Config) {
         primary: 'uid'
     })
 
-    async function getUsername({ uid, event: { user } }: Session) {
-        const [ { name: customName } ] = await ctx.database.get('w-jrrp-name', uid)
-        return customName || user.nick || user.name
+    const getOrInitWith = async <K extends Keys<Tables>>(
+        table: K,
+        index: Query.Shorthand<Indexable>,
+        initializer: () => Awaitable<Create<Tables[K], Tables>>
+    ): Promise<Tables[K]> => {
+        const [ rec ] = await ctx.database.get(table, index)
+        if (rec) return rec
+        const newRec = await initializer()
+        return ctx.database.create(table, newRec)
+    }
+
+    const getUsername = ({ uid, event: { user } }: Session) => (
+        getOrInitWith('w-jrrp-name', uid, () => ({
+            uid,
+            name: user.nick || user.name
+        }))
+        .then(rec => rec.name)
+    )
+
+    interface TopOptions {
+        max: number
+        global: boolean
+        reverse: boolean
+        chart: boolean
+    }
+
+    async function getTop({
+        session, options, label, getList, formatter,
+    }: {
+        session: Session,
+        options: Partial<TopOptions>,
+        label: string,
+        getList: () => Promise<{ value: number, uid: string }[]>,
+        formatter: (value: number) => string
+    }) {
+        const { uid, guildId: gid } = session
+
+        if (! gid && ! options.global) return '请在群内调用'
+
+        const [ name, { data: members }, list ] = await Promise.all([
+            getUsername(session),
+            session.bot.getGuildMemberList(gid),
+            getList()
+        ])
+
+        const sortedList = (await Promise
+            .all(list.map(async ({ uid, value }) => {
+                const [ userPlatform, userId ] = uid.split(':')
+                if (! options.global && (
+                    userPlatform !== session.event.platform ||
+                    ! members.some(member => member.user.id === userId)
+                )) return null
+                const [ rec ] = await ctx.database.get('w-jrrp-name', { uid })
+                const name = rec?.name ?? uid
+                return {
+                    uid, name, value
+                }
+            })))
+            .filter(rec => !! rec)
+            .sort(options.reverse
+                ? (rec1, rec2) => rec1.value - rec2.value
+                : (rec1, rec2) => rec2.value - rec1.value
+            )
+
+        if (! sortedList.length) return '今天还没有人测过人品哦'
+        
+        const topList = sortedList.slice(0, options.max || undefined)
+
+        const value = topList.find(rec => rec.uid === uid)?.value ?? null
+        const rank = value === null ? null : topList.findIndex(rec => rec.value === value) + 1
+        const rankMsg = `${name} ` + (rank !== null
+            ? `今日${label}排名是${options.reverse ? '倒数' : ''}第 ${rank}`
+            : sortedList.some(rec => rec.uid === uid)
+                ? `今日${label}未上榜`
+                : '今日还没有测过人品'
+        )
+
+        if (! options.chart) return `${rankMsg}\n今日${label}排行榜\n` + topList
+            .map((rec, i) => `${rec.uid === uid ? '＊' : '　'} ${i + 1}. ${rec.name}: ${rec.value}`)
+            .join('\n')
+
+        topList.reverse() // ECharts 图表顺序从下向上
+
+        const eh = ctx.echarts.createChart(800, 500 + (topList.length - 10) * 10, {
+            xAxis: {
+                type: 'value',
+                name: label,
+                min: 0,
+                max: 100
+            },
+            yAxis: {
+                type: 'category',
+                name: '用户',
+                data: topList.map(rec => rec.name),
+                axisLabel: {
+                    overflow: 'truncate',
+                    width: 100,
+                    interval: 0,
+                },
+            },
+            grid: {
+                left: 110,
+            },
+            series: {
+                type: 'bar',
+                data: topList.map(rec => ({
+                    value: rec.value,
+                    itemStyle: { color: rec.uid === uid ? colors.accent : colors.primary },
+                })),
+                label: {
+                    show: true,
+                    formatter: ({ data }) => formatter((data as { value: number }).value),
+                },
+            },
+            backgroundColor: '#fff'
+        })
+
+        return [
+            h.text(rankMsg),
+            await eh.export()
+        ]
     }
 
     const colors = {
@@ -133,6 +250,16 @@ export function apply(ctx: Context, config: Config) {
             return `${name} 今天的人品是 ${rp}`
         })
 
+    ctx.command('jrrp.times', '查看我的人品测量次数')
+        .action(async ({ session }) => {
+            const { uid } = session
+            const [ name, recs ] = await Promise.all([
+                getUsername(session),
+                ctx.database.get('w-jrrp-record-v2', { uid })
+            ])
+            return `${name} 测过 ${recs.length} 次人品`
+        })
+
     ctx.command('jrrp.average', '查看我的人品均值')
         .action(async ({ session }) => {
             const { uid } = session
@@ -148,96 +275,46 @@ export function apply(ctx: Context, config: Config) {
 
     ctx.command('jrrp.callme <name:string>', '修改自己的称呼')
         .action(async ({ session: { uid } }, name) => {
-            await ctx.database.set('w-jrrp-name', { uid }, { name })
+            await ctx.database.upsert('w-jrrp-name', [ { uid, name } ])
             return `好的，${name}，请多指教！`
         })
 
     ctx.command('jrrp.top', '查看群内今日人品排行')
         .option('max', '-m <max:number> 设置最大显示人数', { fallback: Infinity })
-        .option('global', '-G 查看全局排行榜（所有群）', { hidden: true })
+        .option('global', '-G 查看全局排行榜（所有群）')
         .option('reverse', '-r 逆序显示')
         .option('chart', '-c 显示图表', { fallback: true })
         .option('chart', '-C 不显示图表（文本形式）', { value: false })
         .alias('jrrp.bottom', { options: { reverse: true } })
-        .action(async ({ session, options }) => {
-            const { uid, guildId: gid } = session
+        .action(({ session, options }) => getTop({
+            session,
+            options,
+            label: '人品',
+            getList: () => ctx.database
+                .select('w-jrrp-record-v2')
+                .where({ day: dayjs().format('YYYY-MM-DD') })
+                .project({ value: 'rp', uid: 'uid' })
+                .execute(),
+            formatter: String,
+        }))
 
-            if (! gid && ! options.global) return '请在群内调用'
-
-            const today = dayjs().format('YYYY-MM-DD')
-
-            const [ name, { data: members }, list ] = await Promise.all([
-                getUsername(session),
-                session.bot.getGuildMemberList(gid),
-                ctx.database.get('w-jrrp-record-v2', { day: today })
-            ])
-
-            const sortedList = (await Promise
-                .all(list.map(async ({ uid, rp }) => {
-                    const [ userPlatform, userId ] = uid.split(':')
-                    if (! options.global && (
-                        userPlatform !== session.event.platform ||
-                        ! members.some(member => member.user.id === userId)
-                    )) return null
-                    const [ rec ] = await ctx.database.get('w-jrrp-name', { uid })
-                    const name = rec?.name ?? uid
-                    return {
-                        uid, name, rp
-                    }
-                })))
-                .filter(rec => !! rec)
-                .sort(options.reverse
-                    ? (rec1, rec2) => rec1.rp - rec2.rp
-                    : (rec1, rec2) => rec2.rp - rec1.rp
-                )
-
-            if (! sortedList.length) return `${name} 今天还没有人测过人品哦`
-            
-            const topList = sortedList.slice(0, options.max || undefined)
-
-            const rp = topList.find(rec => rec.uid === uid)?.rp ?? null
-            const rank = rp === null ? null : topList.findIndex(rec => rec.rp === rp) + 1
-            const rankMsg = `${name} ` + (rank !== null
-                ? `今日人品排名是${options.reverse ? '倒数' : ''}第 ${rank}`
-                : sortedList.some(rec => rec.uid === uid)
-                    ? `今日人品未上榜`
-                    : `今日还没有测过人品`
-            )
-
-            if (! options.chart) return `${rankMsg}\n今日人品排行榜\n` + topList
-                .map((rec, i) => `${rec.uid === uid ? '＊' : '　'} ${i + 1}. ${rec.name}: ${rec.rp}`)
-                .join('\n')
-
-            topList.reverse() // ECharts 图表顺序从下向上
-
-            const eh = ctx.echarts.createChart(800, 500, {
-                xAxis: {
-                    type: 'value',
-                    name: '人品',
-                    min: 0,
-                    max: 100
-                },
-                yAxis: {
-                    type: 'category',
-                    name: '用户',
-                    data: topList.map(rec => rec.name)
-                },
-                series: {
-                    type: 'bar',
-                    data: topList.map(rec => ({
-                        value: rec.rp,
-                        itemStyle: { color: rec.uid === uid ? colors.accent : colors.primary }
-                    })),
-                    label: { show: true },
-                },
-                backgroundColor: '#fff'
-            })
-
-            return [
-                h.text(rankMsg),
-                await eh.export()
-            ]
-        })
+    ctx.command('jrrp.average.top', '查看群内平均人品排行')
+        .option('max', '-m <max:number> 设置最大显示人数', { fallback: Infinity })
+        .option('global', '-G 查看全局排行榜（所有群）')
+        .option('reverse', '-r 逆序显示')
+        .option('chart', '-c 显示图表', { fallback: true })
+        .option('chart', '-C 不显示图表（文本形式）', { value: false })
+        .alias('jrrp.average.bottom', { options: { reverse: true } })
+        .action(({ session, options }) => getTop({
+            session,
+            options,
+            label: '平均人品',
+            getList: () => ctx.database
+                .select('w-jrrp-record-v2')
+                .groupBy('uid', { value: row => $.avg(row.rp) })
+                .execute(),
+            formatter: value => value.toFixed(2),
+        }))
 
     const getJrrpRecs = async (uid: string) => (await ctx.database
         .get('w-jrrp-record-v2', { uid }))
